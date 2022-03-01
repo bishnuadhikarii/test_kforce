@@ -1,0 +1,261 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description:  restPoc with aws
+
+Parameters:
+  paramEnvironment:
+    Type: String
+    Description: Which environment do you want to deploy to? (local, dev, test, or prod)
+    AllowedValues:
+      - dev
+      - test
+      - uat
+      - stage
+      - prod
+  paramServiceName:
+    Type: String
+    Description: The name of the service
+    Default: restPoc
+  paramServiceApiName:
+    Type: String
+    Description: The name of the service
+    Default: restPoc
+  paramReleaseVersion:
+    Type: String
+    Description: The Release Version number
+    Default: 0.1.0
+  paramAccountInfoTableName:
+    Type: String
+    Description: User table name
+    Default: account
+  paramLogRetention:
+    Type: Number
+    Description: Log rentation in days
+    Default: 14
+
+Mappings:
+  # The mappings section doesn't fully support Intrinsic functions like !Ref or !Sub
+  # so values here need to be hard-coded instead of based on parameters.
+
+Globals:
+  Function:
+    Runtime: nodejs12.x
+    MemorySize: 200
+    Timeout: 30
+    Environment:
+      Variables:
+        TABLE_NAME: !Sub ${paramEnvironment}-restPoc-${paramAccountInfoTableName}
+        environmentName: !Ref paramEnvironment
+        logLevel: info
+    Tags:
+      Application: !Ref paramServiceName
+      Environment: !Ref paramEnvironment
+      ReleaseVersion: !Ref paramReleaseVersion
+
+Resources:
+
+  ## Lambda With API Gateway
+  CreateAccountFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/createAccount
+      Handler: index.handler 
+      Role: !GetAtt LambdaFunctionExecutionRole.Arn
+
+  GetAccountInfoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/getAccountInfo
+      Handler: index.handler 
+      Role: !GetAtt LambdaFunctionExecutionRole.Arn
+
+  ## lambdaBasicExecution Role
+  LambdaFunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::Region}-${paramEnvironment}-${paramServiceName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service: lambda.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+
+  ## Lambda function Log group
+  CreateAccountLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: CreateAccountFunction
+    Properties:
+      RetentionInDays: !Ref paramLogRetention
+      LogGroupName: !Join ['',['/aws/lambda/',!Ref CreateAccountFunction]]
+
+  GetAccountLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: GetAccountInfoFunction
+    Properties:
+      RetentionInDays: !Ref paramLogRetention
+      LogGroupName: !Join ['',['/aws/lambda/',!Ref GetAccountInfoFunction]]
+
+  ## Data Source
+  AccountInfoTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${paramEnvironment}-restPoc-${paramAccountInfoTableName}
+      TimeToLiveSpecification:
+        Enabled: true
+        AttributeName: expirationTime
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 2
+
+  ## Policy
+  AccountInfoTablePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub ${paramEnvironment}-restPoc-${paramAccountInfoTableName}-policy
+      Roles:
+        - !Ref LambdaFunctionExecutionRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:DeleteItem
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+              - dynamodb:Scan
+            Resource: '*'
+
+  ## API Gateway
+  ApiGatewayAccount:
+      Type: AWS::ApiGateway::Account
+      Properties: 
+        CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchRole.Arn
+
+  APIGatewayRestAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      ApiKeySourceType: HEADER
+      Description: Rest API to access resources
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Sub ${paramEnvironment}-${paramServiceApiName}
+
+  UserAccountAPIGatewayResource:
+    Type: 'AWS::ApiGateway::Resource'
+    DependsOn: APIGatewayRestAPI
+    Properties:
+      RestApiId: !Ref APIGatewayRestAPI
+      ParentId: !GetAtt APIGatewayRestAPI.RootResourceId
+      PathPart: account
+
+  CreateAccountMethod:
+    Type: 'AWS::ApiGateway::Method'
+    DependsOn: UserAccountAPIGatewayResource
+    Properties:
+      RestApiId: !Ref APIGatewayRestAPI
+      ResourceId: !Ref UserAccountAPIGatewayResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreateAccountFunction.Arn}/invocations
+
+  GetAccountInfoMethod:
+    Type: 'AWS::ApiGateway::Method'
+    DependsOn: UserAccountAPIGatewayResource
+    Properties:
+      RestApiId: !Ref APIGatewayRestAPI
+      ResourceId: !Ref UserAccountAPIGatewayResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetAccountInfoFunction.Arn}/invocations
+
+  ApiGatewayStage:
+    Type: AWS::ApiGateway::Stage
+    DependsOn: ApiGatewayCloudWatchRole
+    Properties:
+      DeploymentId: !Ref APIGatewayDeployment
+      Description: API gateway Stage
+      RestApiId: !Ref APIGatewayRestAPI
+      StageName: !Ref paramEnvironment
+      AccessLogSetting: 
+        DestinationArn: !GetAtt ApiGatewayAccessLogGroup.Arn
+        Format: "{\"stage\":\"$context.stage\",\"request_id\":\"$context.requestId\",\"api_id\":\"$context.apiId\",\"resource_path\":\"$context.resourcePath\",\"resource_id\":\"$context.resourceId\",\"http_method\":\"$context.httpMethod\",\"source_ip\":\"$context.identity.sourceIp\",\"user-agent\":\"$context.identity.userAgent\",\"account_id\":\"$context.identity.accountId\",\"api_key\":\"$context.identity.apiKey\",\"caller\":\"$context.identity.caller\",\"user\":\"$context.identity.user\",\"user_arn\":\"$context.identity.userArn\"}"
+      TracingEnabled: true
+
+  APIGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - CreateAccountMethod
+      - GetAccountInfoMethod
+    Properties:
+      Description: API Gateway Deployment
+      RestApiId: !Ref APIGatewayRestAPI
+
+  CreateAccountInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    DependsOn: CreateAccountFunction
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt CreateAccountFunction.Arn
+      Principal: apigateway.amazonaws.com
+
+  GetAccountInfoInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    DependsOn: GetAccountInfoFunction
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt GetAccountInfoFunction.Arn
+      Principal: apigateway.amazonaws.com
+
+  ApiGatewayCloudWatchRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - >-
+          arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  ApiGatewayAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref paramLogRetention
+      LogGroupName: !Sub "/aws/apigateway/accesslogs/${paramEnvironment}-${paramServiceApiName}"
+
+Outputs:
+  CreateAccountFunction:
+    Description: "create new user lambda function ARN"
+    Value: !GetAtt CreateAccountFunction.Arn
+  GetAccountInfoFunction:
+    Description: "Get user profile lambda function ARN"
+    Value: !GetAtt GetAccountInfoFunction.Arn

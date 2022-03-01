@@ -1,0 +1,16 @@
+{
+    "createUserAccount": {
+        "email": "bishnu@gmail.com",
+        "phoneNumber":"88888888",
+        "firstName":"bishnu",
+        "middleName":"",
+        "lastName":"",
+        "gender":"male"
+    },
+    "getAccountInfo": {
+        "queryStringParameters": {
+            "email": "bishnu@gmail.com",
+            "phoneNumber": "88888888"
+        }
+    }
+}

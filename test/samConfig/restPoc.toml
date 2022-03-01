@@ -1,0 +1,45 @@
+version=0.1
+
+[dev.deploy.parameters]
+stack_name = "dev-rest-poc"
+template_file = "samTemplates/restPoc.yaml"
+s3_bucket = "rest-lambda-poc-nodejs"
+s3_prefix = "rest-poc-dev"
+region = "eu-west-1"
+no_confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+parameter_overrides = "paramEnvironment=\"dev\""
+profile = "utab"
+
+[test.deploy.parameters]
+stack_name = "test-rest-poc"
+template_file = "samTemplates/restPoc.yaml"
+s3_bucket = "rest-lambda-poc-nodejs"
+s3_prefix = "rest-poc-test"
+region = "eu-west-1"
+no_confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+parameter_overrides = "paramEnvironment=\"test\""
+profile = "utab"
+
+[uat.deploy.parameters]
+stack_name = "uat-db-cache"
+template_file = "samTemplates/restPoc.yaml"
+s3_bucket = "rest-poc-nodejs"
+s3_prefix = "rest-poc-uat"
+region = "eu-west-1"
+no_confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+parameter_overrides = "paramEnvironment=\"uat\""
+profile = "utab"
+
+[stage.deploy.parameters]
+stack_name = "stage-rest-poc"
+template_file = "samTemplates/restPoc.yaml"
+s3_bucket = "rest-lambda-poc-nodejs"
+s3_prefix = "rest-poc-stage"
+region = "eu-west-1"
+no_confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+parameter_overrides = "paramEnvironment=\"stage\""
+profile = "utab"
